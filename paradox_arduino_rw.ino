@@ -182,16 +182,39 @@ void  check_keystroke_sent(){
   
 }
 void decodeMessage(String &msg) {
-
+  //Get command
   int cmd = GetIntFromString(msg.substring(0, 8));
+  
+  //Some commands have trailing "00 00 00 00" so remove
+  if(cmd == 0xD0 || cmd == 0xD1){
+      //Strip last 00's
+      msg = msg.substring(0, msg.length()-(4*8)-1);
+      
+      if(!check_crc(msg)){
+         Serial.println("CRC Faied:");
+        printSerial(msg, HEX);
+        return;
+      }
+      
+  }else{
+    
+      if(!check_crc(msg)) {
+         Serial.println("CRC Faied:");
+        printSerial(msg, HEX);
+        return;
+      }
+  }
+  
+  //Serial.println(cmd);
+
+ // printSerial(msg, HEX);
+ // printSerial(msg, BIN);
 
   switch (cmd) {
-    case 0xd0: //Zone Status Message
-
+    case 0xD0: //Zone Status Message
       processZoneStatus(msg);
-
       break;
-    case 0xD1: //Seems like Alarm status
+    case 0xD1://Seems like Alarm status
       processAlarmStatus(msg);
 
       break;
@@ -204,7 +227,9 @@ void decodeMessage(String &msg) {
       Serial.println("Think button press");
       printSerial(msg, HEX);
       break;
-    case 0xE0: // Status
+    case 0xE0: // Status.
+      //Serial.println("Status");
+      //printSerial(msg, HEX);
       //Serial.println("0xe0");
       break;
     case 0x0:  //dunno
@@ -217,12 +242,16 @@ void decodeMessage(String &msg) {
       Serial.println("KeyPress ACKED");
       Serial.println((String) Response);
       printSerial(Response, HEX);
-     printSerial(msg, HEX);
+      printSerial(msg, HEX);
       break;
 
     default:
-      Serial.println(cmd, HEX);
-      Serial.println((String) Response);
+      //Serial.println("Dunno");
+      //printSerialFull(msg);
+     // printSerial(msg, HEX);
+     // printSerial(msg, BIN);
+     // printSerial(msg, 1000);
+     // Serial.println((String) Response);
 
       break;
       ;
@@ -232,19 +261,31 @@ void decodeMessage(String &msg) {
 
 }
 
+
+/*******************************************************************************************************/
+/****************************** Process Zone Status connect *****************************************/
+/**
+ * All ok
+ * 11010000 00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000001 01100011
+ * Zone 1
+ * 11010000 00000000 01000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000001 10111001   
+ * Zone 1 and 2 and 3
+ * 11010000 00000000 01010100 00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000001 1010 0001
+ */
 void processZoneStatus(String &msg) {
   //Zone 1 = bit 17
   //Zone 2 = bit 19
   //Zone 3 = bit 21
 
   // Serial.println("ProcessingZones");
+   //printSerialFull(msg);
 
   for (int i = 0; i < 32; i++) {
     //Serial.println(17+(i*2));
 
     if (msg[17 + (i * 2)] == '1') {
       ZoneStatus[i] = 1;
-      //Serial.println("Zone:"+(String)(i+1)+"Active");
+      Serial.println("Zone:"+(String)(i+1)+"Active");
 
     } else {
 
@@ -258,22 +299,121 @@ void processZoneStatus(String &msg) {
 /****************************** Process Alarm (D1) Status connect *****************************************/
 /*
  * Might be first 5 bytes are Partition1 and 2nd 5 bytes is partion 2??
- * Alarm Set:     11010001 00000000 01000000 00010001 00000000 00000000 00000000 00000100 00000000 00000000 00000001 01110101
  * Alarm Not set: 11010001 00000000 00000000 00010001 00000000 00000000 00000000 01000100 00000000 00000000 00000001 01001111
- *
+ * Alarm Set:     11010001 00000000 01000000 00010001 00000000 00000000 00000000 00000100 00000000 00000000 00000001 01110101  
+ * Alarm STay     11010001 00000000 00000000 00010001 00000000 00000000 00000100 00000100 00000000 00000000 00000001 10110000
+ * Alarm Sleep    11010001 00000000 00000100 00010001 00000000 00000000 00000000 00000100 00000000 00000000 00000001 00001101
+ *                 
  *
  */
 
 void processAlarmStatus(String &msg) {
 
-  AlarmStatus.status = (msg[(8 + 8 + 1)] == '1') ? 1 : 2;
+//  AlarmStatus.status = (msg[(8 + 8 +8 +8 + 8 8 + 8 + 1)] == '1') ? 1 : 0;
 
-  // Serial.print("Alarm Status: ");Serial.println(AlarmStatus.status);
+  //If set , then get status
+  if(msg[((8*7) + 1)] == '0'){
 
+      //Sleep
+      if(msg[((8*2) + 5)] == '1'){
+        
+        AlarmStatus.status = 20;
+      }
+      //Stay
+      if(msg[((8*6) + 5)] == '1'){
+        AlarmStatus.status = 30;
+      }
+
+      //Full Arm
+      if( msg[((8*2) + 1)] == '1' ){
+        //Exit Delay
+        if(msg[((8*2) + 0)] == '1'){
+          AlarmStatus.status = 40;
+        }else 
+        //Full Alarm
+        if(msg[((8*2) + 0)] == '0'){
+          AlarmStatus.status = 49;
+        } else{
+          
+          AlarmStatus.status = 45;
+        }
+
+        
+      }
+      
+  }else{
+    //Not Set
+    AlarmStatus.status = 10;
+  }
+  
+  //Only print if not set
+  if(AlarmStatus.status != 10){
+    Serial.print("Alarm Status: ");Serial.println(AlarmStatus.status);
+    printSerial(msg, BIN);
+  }
 }
 
+/**
+ * CRC8
+ * 
+ * Do Maxim crc8 calc
+ */
+uint8_t crc8( uint8_t *addr, uint8_t len)
+{
+     uint8_t crc=0;
+     
+     for (uint8_t i=0; i<len;i++) 
+     {
+           uint8_t inbyte = addr[i];
+           for (uint8_t j=0;j<8;j++) 
+           {
+                 uint8_t mix = (crc ^ inbyte) & 0x01;
+                 crc >>= 1;
+                 if (mix) 
+                       crc ^= 0x8C;
+                 
+                 inbyte >>= 1;
+           }
+     }
+     return crc;
+}
 
+/**
+ * Check CRC
+ * Check if CRC is valid
+ * 
+ */
+uint8_t check_crc(String &st){
+  
+ // printSerial(st);
+ //
 
+  String  val = "";
+  int Bytes =   (st.length()) / 8;
+  uint8_t calcCRCByte;
+
+  
+  //Serial.print("Bytes :");Serial.println(Bytes);
+  //printSerialHex(st);
+    
+  //Make byte array    
+  uint8_t* BinnaryStr = strToBinArray(st);    
+  
+  uint8_t CRC = BinnaryStr[Bytes-1];
+  
+  calcCRCByte = crc8(BinnaryStr,(int) Bytes-1);
+  
+  //Serial.print("Crc :");Serial.print((int)CRC,HEX);
+
+  //Serial.print("CrcCalc :");Serial.print((int)calcCRCByte,HEX);
+  //Serial.println("");
+     
+   
+
+  return calcCRCByte == CRC;
+
+  
+}
 
 void printSerial(String &st, int Format)
 {
@@ -297,28 +437,26 @@ void printSerial(String &st, int Format)
   }
   Serial.println("");
 }
-void clkCalled()
+
+
+void printSerialFull(String &st)
 {
-  /*
-  * Code need to be updated to ignore the response from the keypad (Rising Edge Comms).
-  *
-  * Panel to other is on Clock Falling edge, Reply is after keeping DATA low (it seems) and then reply on Rising edge
-  */
-  //Just add small delay to make sure DATA is already set, each clock is 500 ~microseconds, Seem to have about 50ms delay before Data goes high when keypad responce and creating garbage .
-  delayMicroseconds(150);
-  if (!digitalRead(DTA)) st += "1"; else st += "0";
+  //Get number of Bytes
+  int Bytes = (st.length()) / 8;
 
-  if (st.length() > 200)
+  String  val = "";
+  int m = 0;
+
+  for (int i = 0; i < Bytes; i++)
   {
-    Serial.print("String to long");
-    Serial.println((String) st);
-    printSerialHex(st);
-    //st = "";
-    return; // Do not overflow the arduino's little ram
+    val = st.substring((i * 8), ((i * 8)) + 8);
+    m += GetIntFromString(val);
+
   }
-
-
+  Serial.println(m);
 }
+
+
 
 bool checkClockIdle() {
 
@@ -336,32 +474,8 @@ bool checkClockIdle() {
   }
 }
 
-void interuptClockFalling()
-{
 
-  //## Set last Clock time
-  LastClkSignal = micros();
 
-  /*
-  * Code need to be updated to ignore the response from the keypad (Rising Edge Comms).
-  *
-  * Panel to other is on Clock Falling edge, Reply is after keeping DATA low (it seems) and then reply on Rising edge
-  */
-
-  //Just add small delay to make sure DATA is already set, each clock is 500 ~microseconds, Seem to have about 50ms delay before Data goes high when keypad responce and creating garbage .
-  delayMicroseconds(150);
-  if (!digitalRead(DTA)) BusMessage += "1"; else BusMessage += "0";
-
-  if (BusMessage.length() > 200)
-  {
-    Serial.println("String to long");
-    //Serial.println((String) BusMessage);
-    BusMessage = "";
-    //    printSerialHex(BusMessage);
-    return; // Do not overflow the arduino's little ram
-  }
-
-}
 void interuptClockChange()
 {
   //Falling Edge
@@ -384,7 +498,7 @@ void interuptClockChange()
     //Just add small delay to make sure DATA is already set, each clock is 500 ~microseconds, Seem to have about 50ms delay before Data goes high when keypad responce and creating garbage .
     delayMicroseconds(150);
     if (!digitalRead(DTA)) BusMessage += "1"; else BusMessage += "0";
-
+    //Serial.println(digitalRead(DTA));
     if (BusMessage.length() > 200)
     {
       Serial.println("String to long");
@@ -574,6 +688,8 @@ unsigned int GetIntFromString(String str) {
 
   return r;
 }
+
+
 unsigned int getBinaryData(String &st, int offset, int length)
 {
   int buf = 0;
@@ -584,4 +700,27 @@ unsigned int getBinaryData(String &st, int offset, int length)
   }
   return buf;
 }
+/**
+ * Convert str to binary array
+ * 
+ */
+uint8_t* strToBinArray(String &st)
+{
+  int Bytes = (st.length()) / 8;
+  uint8_t Data[Bytes];
+  
+  String  val = "";
 
+  for (int i = 0; i < Bytes; i++)
+  {
+    //String kk = "012345670123456701234567";
+    val = st.substring((i * 8), ((i * 8)) + 8);
+
+    Data[i] = GetIntFromString(val);
+    
+
+  }
+
+  
+  return Data;
+}
